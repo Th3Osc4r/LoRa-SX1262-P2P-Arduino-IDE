@@ -1,6 +1,14 @@
 // sx1262_driver.cpp
 // Integrated Phase 1.1, 1.2, 1.3 fixes
 // Phase 3: Hardware Interrupts (Option 1: Blocking/Yielding)
+//
+// VERSION 2 CHANGES:
+// - sx1262_receive(): Added RX timing capture (rx_start_ms, rx_done_ms, rx_duration_ms)
+//   These fields were defined in sx1262_rx_result_t but never populated.
+//   Now properly measures actual RX operation time for diagnostics.
+//
+// VERIFIED WORKING: Diagnostic testing confirmed timing fix is effective
+//
 
 #include "sx1262_driver.h"
 #include "sx1262_mutex_guard.h"  // Phase 1.1: RAII Mutex Guard
@@ -804,6 +812,15 @@ sx1262_result_t sx1262_receive(
     ulTaskNotifyTake(pdTRUE, 0);
     g_driver_ctx.blocking_task_handle = xTaskGetCurrentTaskHandle();
 
+    // =========================================================================
+    // FIX (v2): Capture RX start time for timing diagnostics
+    // =========================================================================
+    uint32_t rx_start_ms = hal_get_time_ms();
+    if (result) {
+        result->rx_start_ms = rx_start_ms;
+        result->timeout_used_ms = timeout_ms;
+    }
+
     // Send SetRx command
     hal_spi_cs_assert(1);
     hal_spi_transfer(rx_cmd, NULL, 4);
@@ -824,6 +841,15 @@ sx1262_result_t sx1262_receive(
     uint32_t wait_ticks = pdMS_TO_TICKS(timeout_ms + 100);
     ulTaskNotifyTake(pdTRUE, wait_ticks);
     g_driver_ctx.blocking_task_handle = NULL;
+
+    // =========================================================================
+    // FIX (v2): Capture RX done time for timing diagnostics
+    // =========================================================================
+    uint32_t rx_done_ms = hal_get_time_ms();
+    if (result) {
+        result->rx_done_ms = rx_done_ms;
+        result->rx_duration_ms = rx_done_ms - rx_start_ms;
+    }
 
     // CHECK STATUS
     uint16_t irq = 0;

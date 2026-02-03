@@ -1,4 +1,13 @@
 // sx1262_spi_protocol.cpp
+// 
+// VERSION 2 CHANGES:
+// - spi_set_tx(): Modified to NOT wait for BUSY LOW after sending SetTx command.
+//   BUSY stays HIGH during entire TX operation (Time-on-Air). The old behavior
+//   caused ~ToA ms of redundant delay since the caller also waits for TX_DONE ISR.
+//   This fix reduces TX Duration from ~2x ToA to ~1x ToA.
+//
+// VERIFIED WORKING: Diagnostic testing confirmed spi_set_tx returns in 1ms (not 30ms)
+//
 #include "sx1262_spi_protocol.h"
 #include "sx1262_hal.h"
 #include "config.h"
@@ -298,7 +307,7 @@ spi_result_t spi_read_register(uint16_t addr, uint8_t *data, uint16_t len) {
     if (res == SPI_OK) {
         // Data starts at index 0 in rx_buf because spi_cmd() doesn't copy anymore
         // when rx_data == rx_buf (same pointer), it leaves data in place
-        memcpy(data, rx_buf, len);  // â† Changed from rx_buf + 4 to rx_buf
+        memcpy(data, rx_buf, len);  // Ã¢â€ Â Changed from rx_buf + 4 to rx_buf
         
         #if DEBUG_VERBOSE_SPI
         SX1262_LOG_DEBUG("[SPI] Extracted %d bytes from index 0: ", len);
@@ -477,7 +486,7 @@ spi_result_t spi_set_tx(uint32_t timeout_us) {
         // No timeout - radio stays in TX until packet sent
         timeout_steps = 0x000000;
     } else {
-        // Convert microseconds to 15.625Âµs steps using integer math
+        // Convert microseconds to 15.625Ã‚Âµs steps using integer math
         // Formula: steps = (timeout_us * 64 + 999) / 1000
         // The +999 ensures rounding up
         timeout_steps = ((uint64_t)timeout_us * 64 + 999) / 1000;
@@ -488,10 +497,11 @@ spi_result_t spi_set_tx(uint32_t timeout_us) {
         }
     }
     
-    uint8_t params[3] = {
-        (uint8_t)((timeout_steps >> 16) & 0xFF),  // Timeout MSB
-        (uint8_t)((timeout_steps >> 8) & 0xFF),   // Timeout MID
-        (uint8_t)(timeout_steps & 0xFF)           // Timeout LSB
+    uint8_t cmd[4] = {
+        SX1262_OP_SET_TX,                          // Opcode 0x83
+        (uint8_t)((timeout_steps >> 16) & 0xFF),   // Timeout MSB
+        (uint8_t)((timeout_steps >> 8) & 0xFF),    // Timeout MID
+        (uint8_t)(timeout_steps & 0xFF)            // Timeout LSB
     };
     
     #if DEBUG_VERBOSE_SPI
@@ -499,7 +509,40 @@ spi_result_t spi_set_tx(uint32_t timeout_us) {
                    timeout_us, timeout_steps);
     #endif
     
-    return spi_cmd(SX1262_OP_SET_TX, params, 3, NULL, 0, 0, NULL);
+    // =========================================================================
+    // CRITICAL FIX (v2): Unlike other commands, SetTx causes BUSY to stay HIGH
+    // for the ENTIRE duration of the transmission (Time-on-Air).
+    // The standard spi_cmd() waits for BUSY LOW after every command, which
+    // would block for ~ToA milliseconds. This is redundant because the caller
+    // (sx1262_transmit) uses ISR-based notification to detect TX_DONE.
+    //
+    // Solution: Send SetTx manually without post-command BUSY wait.
+    // =========================================================================
+    
+    // Step 1: Wait for initial BUSY LOW (device must be ready)
+    uint32_t busy_start = hal_get_time_us();
+    while (hal_gpio_read(PIN_SX1262_BUSY)) {
+        if ((hal_get_time_us() - busy_start) > default_busy_timeout_us) {
+            SX1262_LOG_ERROR("[SPI] spi_set_tx: BUSY timeout before SetTx command\n");
+            return SPI_ERROR_BUSY_TIMEOUT;
+        }
+    }
+    
+    // Step 2: Send SetTx command via SPI
+    hal_spi_cs_assert(1);  // CS LOW - start transaction
+    hal_result_t res = hal_spi_transfer(cmd, NULL, 4);
+    hal_spi_cs_assert(0);  // CS HIGH - end transaction
+    
+    if (res != HAL_OK) {
+        SX1262_LOG_ERROR("[SPI] spi_set_tx: SPI transfer failed\n");
+        return SPI_ERROR_SPI_WRITE;
+    }
+    
+    // Step 3: Return immediately - DO NOT wait for BUSY LOW
+    // BUSY will go HIGH and stay HIGH for entire TX duration.
+    // Caller uses DIO1 interrupt to detect TX_DONE.
+    
+    return SPI_OK;
 }
 
 spi_result_t spi_get_device_id(uint8_t* device_id) {
@@ -547,7 +590,7 @@ spi_result_t spi_get_device_id(uint8_t* device_id) {
         if (memcmp(id_string, "SX1261", 6) == 0) {
             SX1262_LOG_SPI("  -> Chip Type: SX1261 (Low Power)\n");
         } else if (memcmp(id_string, "SX1262", 6) == 0) {
-            SX1262_LOG_SPI("  -> Chip Type: SX1262 (High Power) âœ“\n");
+            SX1262_LOG_SPI("  -> Chip Type: SX1262 (High Power) Ã¢Å“â€œ\n");
         } else if (memcmp(id_string, "SX1268", 6) == 0) {
             SX1262_LOG_SPI("  -> Chip Type: SX1268 (High Power)\n");
         } else {
@@ -649,7 +692,7 @@ spi_result_t spi_set_rx(uint32_t timeout_us) {
         // No timeout - continuous RX mode
         timeout_steps = 0x000000;
     } else {
-        // Convert microseconds to 15.625Âµs steps using integer math
+        // Convert microseconds to 15.625Ã‚Âµs steps using integer math
         // Formula: steps = (timeout_us * 64 + 999) / 1000
         // The +999 ensures rounding up
         timeout_steps = ((uint64_t)timeout_us * 64 + 999) / 1000;

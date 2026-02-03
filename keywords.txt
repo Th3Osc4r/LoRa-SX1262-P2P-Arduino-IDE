@@ -1,0 +1,231 @@
+#######################################
+# SX1262 LoRa P2P Driver Keywords
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+sx1262_result_t	KEYWORD1
+sx1262_state_t	KEYWORD1
+sx1262_sleep_mode_t	KEYWORD1
+sx1262_lora_sf_t	KEYWORD1
+sx1262_lora_bw_t	KEYWORD1
+sx1262_lora_cr_t	KEYWORD1
+sx1262_lora_header_t	KEYWORD1
+sx1262_lora_crc_t	KEYWORD1
+sx1262_lora_iq_t	KEYWORD1
+sx1262_ramp_time_t	KEYWORD1
+sx1262_lora_config_t	KEYWORD1
+sx1262_tx_result_t	KEYWORD1
+sx1262_rx_result_t	KEYWORD1
+sx1262_self_test_result_t	KEYWORD1
+sx1262_statistics_t	KEYWORD1
+sx1262_power_state_t	KEYWORD1
+sx1262_watchdog_t	KEYWORD1
+sx1262_security_ctx_t	KEYWORD1
+sx1262_security_storage_t	KEYWORD1
+sx1262_security_result_t	KEYWORD1
+sx1262_link_alarm_t	KEYWORD1
+
+#######################################
+# Methods/Functions (KEYWORD2)
+#######################################
+
+# Initialization
+sx1262_init_simple	KEYWORD2
+sx1262_init_extended	KEYWORD2
+sx1262_driver_init	KEYWORD2
+sx1262_driver_deinit	KEYWORD2
+sx1262_driver_is_initialized	KEYWORD2
+sx1262_self_test	KEYWORD2
+sx1262_print_self_test_result	KEYWORD2
+sx1262_get_init_error_help	KEYWORD2
+
+# TX/RX Operations
+sx1262_transmit	KEYWORD2
+sx1262_receive	KEYWORD2
+sx1262_turnaround_tx_to_rx	KEYWORD2
+sx1262_turnaround_rx_to_tx	KEYWORD2
+sx1262_prepare_for_tx	KEYWORD2
+sx1262_prepare_for_rx	KEYWORD2
+
+# Power Management
+sx1262_sleep	KEYWORD2
+sx1262_wake	KEYWORD2
+sx1262_is_sleeping	KEYWORD2
+sx1262_get_power_stats	KEYWORD2
+
+# Configuration
+sx1262_config_init_defaults	KEYWORD2
+sx1262_config_lora	KEYWORD2
+sx1262_set_frequency	KEYWORD2
+sx1262_set_tx_power	KEYWORD2
+sx1262_set_modulation_params	KEYWORD2
+sx1262_set_packet_params	KEYWORD2
+sx1262_set_sync_word	KEYWORD2
+sx1262_get_config	KEYWORD2
+sx1262_validate_config	KEYWORD2
+sx1262_print_config	KEYWORD2
+sx1262_get_bandwidth_hz	KEYWORD2
+sx1262_get_time_on_air_ms	KEYWORD2
+sx1262_is_ldro_required	KEYWORD2
+
+# State Management
+sx1262_get_state	KEYWORD2
+sx1262_set_state	KEYWORD2
+sx1262_state_to_string	KEYWORD2
+sx1262_is_state_transition_valid	KEYWORD2
+
+# Watchdog
+sx1262_watchdog_init	KEYWORD2
+sx1262_watchdog_enable	KEYWORD2
+sx1262_watchdog_disable	KEYWORD2
+sx1262_watchdog_feed	KEYWORD2
+sx1262_emergency_reset	KEYWORD2
+
+# Error Handling
+sx1262_error_to_string	KEYWORD2
+sx1262_get_last_error	KEYWORD2
+sx1262_clear_error	KEYWORD2
+
+# Statistics
+sx1262_get_statistics	KEYWORD2
+sx1262_reset_statistics	KEYWORD2
+sx1262_print_status	KEYWORD2
+sx1262_print_transition_history	KEYWORD2
+
+# HAL Functions
+hal_board_power_init	KEYWORD2
+hal_board_power_deinit	KEYWORD2
+hal_init	KEYWORD2
+hal_deinit	KEYWORD2
+hal_spi_transfer	KEYWORD2
+hal_gpio_read	KEYWORD2
+hal_gpio_write	KEYWORD2
+hal_delay_ms	KEYWORD2
+hal_get_time_ms	KEYWORD2
+
+# Security Module
+sx1262_security_init	KEYWORD2
+sx1262_security_init_with_storage	KEYWORD2
+sx1262_secure_pack	KEYWORD2
+sx1262_secure_unpack	KEYWORD2
+sx1262_security_force_save	KEYWORD2
+sx1262_security_has_storage	KEYWORD2
+sx1262_security_get_stats	KEYWORD2
+sx1262_security_set_replay_window	KEYWORD2
+
+# Duty Cycle Module
+sx1262_dc_init	KEYWORD2
+sx1262_dc_can_transmit	KEYWORD2
+sx1262_dc_record_transmission	KEYWORD2
+sx1262_dc_get_remaining_budget	KEYWORD2
+
+# Link Health Module
+sx1262_link_health_init	KEYWORD2
+sx1262_link_health_record_rx	KEYWORD2
+sx1262_link_health_get_alarms	KEYWORD2
+sx1262_link_health_get_node_stats	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+# Result Codes
+SX1262_OK	LITERAL1
+SX1262_ERROR_INVALID_STATE	LITERAL1
+SX1262_ERROR_INVALID_PARAM	LITERAL1
+SX1262_ERROR_TIMEOUT	LITERAL1
+SX1262_ERROR_SPI	LITERAL1
+SX1262_ERROR_BUSY_TIMEOUT	LITERAL1
+SX1262_ERROR_NOT_INITIALIZED	LITERAL1
+SX1262_ERROR_MUTEX	LITERAL1
+SX1262_ERROR_WATCHDOG	LITERAL1
+SX1262_ERROR_HARDWARE	LITERAL1
+
+# States
+SX1262_STATE_UNINITIALIZED	LITERAL1
+SX1262_STATE_SLEEP	LITERAL1
+SX1262_STATE_STANDBY_RC	LITERAL1
+SX1262_STATE_STANDBY_XOSC	LITERAL1
+SX1262_STATE_FS	LITERAL1
+SX1262_STATE_TX	LITERAL1
+SX1262_STATE_RX	LITERAL1
+SX1262_STATE_CAD	LITERAL1
+SX1262_STATE_ERROR	LITERAL1
+
+# Sleep Modes
+SX1262_SLEEP_COLD	LITERAL1
+SX1262_SLEEP_WARM	LITERAL1
+
+# Spreading Factors
+SX1262_LORA_SF5	LITERAL1
+SX1262_LORA_SF6	LITERAL1
+SX1262_LORA_SF7	LITERAL1
+SX1262_LORA_SF8	LITERAL1
+SX1262_LORA_SF9	LITERAL1
+SX1262_LORA_SF10	LITERAL1
+SX1262_LORA_SF11	LITERAL1
+SX1262_LORA_SF12	LITERAL1
+
+# Bandwidths
+SX1262_LORA_BW_7P8	LITERAL1
+SX1262_LORA_BW_10P4	LITERAL1
+SX1262_LORA_BW_15P6	LITERAL1
+SX1262_LORA_BW_20P8	LITERAL1
+SX1262_LORA_BW_31P25	LITERAL1
+SX1262_LORA_BW_41P7	LITERAL1
+SX1262_LORA_BW_62P5	LITERAL1
+SX1262_LORA_BW_125	LITERAL1
+SX1262_LORA_BW_250	LITERAL1
+SX1262_LORA_BW_500	LITERAL1
+
+# Coding Rates
+SX1262_LORA_CR_4_5	LITERAL1
+SX1262_LORA_CR_4_6	LITERAL1
+SX1262_LORA_CR_4_7	LITERAL1
+SX1262_LORA_CR_4_8	LITERAL1
+
+# Header Types
+SX1262_LORA_HEADER_EXPLICIT	LITERAL1
+SX1262_LORA_HEADER_IMPLICIT	LITERAL1
+
+# CRC Types
+SX1262_LORA_CRC_OFF	LITERAL1
+SX1262_LORA_CRC_ON	LITERAL1
+
+# IQ Polarity
+SX1262_LORA_IQ_NORMAL	LITERAL1
+SX1262_LORA_IQ_INVERTED	LITERAL1
+
+# Duty Cycle Regions
+SX1262_DC_REGION_ETSI_G1	LITERAL1
+SX1262_DC_REGION_ETSI_G2	LITERAL1
+SX1262_DC_REGION_ETSI_G3	LITERAL1
+SX1262_DC_REGION_FCC_915	LITERAL1
+
+# Link Health Alarms
+SX1262_LINK_ALARM_SILENT	LITERAL1
+SX1262_LINK_ALARM_WEAK_SIGNAL	LITERAL1
+SX1262_LINK_ALARM_IRREGULAR	LITERAL1
+SX1262_LINK_ALARM_RECOVERY	LITERAL1
+
+# Security Results
+SX1262_SEC_OK	LITERAL1
+SX1262_SEC_ERROR_REPLAY	LITERAL1
+SX1262_SEC_ERROR_DECRYPT	LITERAL1
+SX1262_SEC_ERROR_INVALID	LITERAL1
+
+# Board Presets
+BOARD_HELTEC_WIFI_LORA_32_V3	LITERAL1
+BOARD_ESP32S3_WAVESHARE	LITERAL1
+BOARD_ESP32_WROOM_WAVESHARE	LITERAL1
+BOARD_CUSTOM	LITERAL1
+
+# Log Levels
+SX1262_LOG_LEVEL_NONE	LITERAL1
+SX1262_LOG_LEVEL_ERROR	LITERAL1
+SX1262_LOG_LEVEL_WARN	LITERAL1
+SX1262_LOG_LEVEL_INFO	LITERAL1
+SX1262_LOG_LEVEL_DEBUG	LITERAL1
