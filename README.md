@@ -6,7 +6,7 @@
 
 **Production-grade SX1262 LoRa driver for ESP32/ESP32-S3 with professional features.**
 
-A comprehensive driver suite for Semtech SX1262 LoRa transceivers, designed for high-reliability industrial applications including railway monitoring, IoT infrastructure, and remote sensing.
+A comprehensive driver suite for Semtech SX1262 LoRa transceivers, designed for high-reliability applications including IoT infrastructure.
 
 ## ✨ Features
 
