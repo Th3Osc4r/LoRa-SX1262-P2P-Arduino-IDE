@@ -40,7 +40,7 @@ A comprehensive driver suite for Semtech SX1262 LoRa transceivers, designed for 
 
 ## 📦 Installation
 
-### Method 1: Arduino Library Manager (Recommended)
+### Method 1: Arduino Library Manager (Not available yet)
 
 1. Open Arduino IDE
 2. Go to **Sketch → Include Library → Manage Libraries...**
