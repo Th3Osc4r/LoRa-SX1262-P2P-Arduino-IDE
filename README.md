@@ -33,6 +33,23 @@ The table below summarizes the key design differences compared to commonly used 
 | Target user                     | Embedded / systems engineers | Rapid prototyping              |
 
 
+ +---------------------------------------------------------------------+
+ |              SX1262 DRIVER TIMING BENCHMARK RESULTS                 |
+ +---------------------------------------------------------------------+
+ |  Board: Heltec WiFi LoRa 32 V3                                      |
+ |  Frequency: 868100000 Hz   TX Power: 14 dBm                         |
+ +---------------------------------------------------------------------+
+ |  sx1262_init_simple():       213 ms                                 |
+ |                                                                     |
+ |  Wake from WARM sleep:      2571 us  (min: 2569, max: 2614)         |
+ |  Wake from COLD sleep:    121082 us  (min: 121080, max: 121086)     |
+ |                                                                     |
+ |  TX-to-RX turnaround:         28 ms  (overhead only)                |
+ +---------------------------------------------------------------------+
+The COLD wake is high because it includes sx1262_driver_deinit() + sx1262_init_simple() 
+— that's the full teardown/rebuild cycle. The raw chip wake from COLD is ~3.5 ms, but 
+the test measures the complete "sleep → usable radio" time which is more realistic.
+
 This driver prioritizes:
 
 Determinism over convenience
@@ -85,80 +102,6 @@ this driver is designed for that class of problem.
 - **Signal Quality Alarms** - Silent node, weak signal, irregular timing
 - **Statistics Collection** - RSSI/SNR history and trends
 
-## ⚡ Quick Start — TX/RX in 20 Lines
-
-**1. Set your board in `config.h`** — uncomment your board or define custom pins:
-
-```c
-// config.h — uncomment ONE:
-//#define BOARD_HELTEC_WIFI_LORA_32_V3
-#define BOARD_ESP32S3_WAVESHARE
-//#define BOARD_ESP32_WROOM_WAVESHARE
-//#define BOARD_CUSTOM                  // ← define your own pins below
-```
-
-**2. Transmitter sketch:**
-
-```
-#include "sx1262_driver.h"
-
-void setup() {
-    Serial.begin(115200);
-    if (sx1262_init_simple(868100000, 14) != SX1262_OK) {   // 868.1 MHz, +14 dBm
-        Serial.println("Radio init failed!");
-        while (1);
-    }
-}
-
-void loop() {
-    uint8_t msg[] = "Hello LoRa!";
-    sx1262_tx_result_t tx_res;
-    if (sx1262_transmit(msg, sizeof(msg), 0, &tx_res) == SX1262_OK) {
-        Serial.printf("TX OK  %lu ms\n", tx_res.tx_duration_ms);
-    }
-    // Immediately listen for an ACK
-    uint8_t buf[255];
-    sx1262_rx_result_t rx_res;
-    if (sx1262_turnaround_tx_to_rx(buf, sizeof(buf), 1000, &rx_res) == SX1262_OK) {
-        Serial.printf("ACK!   RSSI %d dBm\n", rx_res.rssi_pkt / 2);
-    }
-    delay(3000);
-}
-```
-
-**3. Receiver sketch:**
-
-```cpp
-#include "sx1262_driver.h"
-
-void setup() {
-    Serial.begin(115200);
-    if (sx1262_init_simple(868100000, 14) != SX1262_OK) {
-        Serial.println("Radio init failed!");
-        while (1);
-    }
-}
-
-void loop() {
-    uint8_t buf[255];
-    sx1262_rx_result_t rx_res;
-    if (sx1262_receive(buf, sizeof(buf), 5000, &rx_res) == SX1262_OK) {
-        Serial.printf("RX [%d B] RSSI %d dBm : %.*s\n",
-                       rx_res.payload_length, rx_res.rssi_pkt / 2,
-                       rx_res.payload_length, buf);
-        // Respond immediately
-        uint8_t ack[] = "ACK";
-        sx1262_turnaround_rx_to_tx(ack, sizeof(ack), 0, NULL);
-    }
-}
-```
-
-> **That's it.** `sx1262_init_simple()` handles all SPI, IRQ, modulation, and errata configuration.  
-> Both nodes must share the same frequency, SF, and BW — the defaults (`SF7 / 125 kHz / CR 4/5`) work out of the box.  
-> Need more range? Use `sx1262_init_extended()` to bump to SF10/SF12.
-
-For advanced usage (custom modulation, low-power modes, AES, duty-cycle enforcement), see the User Manual.
-
 ## 📦 Installation
 
 ### Method 1: Arduino Library Manager (Not available yet)
@@ -202,7 +145,7 @@ lib_deps =
 
 Edit `config.h` in the library's `src/` folder and uncomment **exactly one** board preset:
 
-```cpp
+```
 // ============================================================================
 // BOARD SELECTION - Uncomment exactly ONE
 // ============================================================================
@@ -216,7 +159,7 @@ Edit `config.h` in the library's `src/` folder and uncomment **exactly one** boa
 
 If using `BOARD_CUSTOM`, define your pin mappings:
 
-```cpp
+```
 #define BOARD_CUSTOM
 #define BOARD_NAME "My Custom Board"
 
@@ -351,6 +294,12 @@ sx1262_result_t sx1262_set_tx_power(int8_t power_dbm, sx1262_ramp_time_t ramp);
 sx1262_result_t sx1262_set_modulation_params(sf, bw, cr, ldro);
 ```
 
+> **That's it.** `sx1262_init_simple()` handles all SPI, IRQ, modulation, and errata configuration.  
+> Both nodes must share the same frequency, SF, and BW — the defaults (`SF7 / 125 kHz / CR 4/5`) work out of the box.  
+> Need more range? Use `sx1262_init_extended()` to bump to SF10/SF12.
+
+For advanced usage (custom modulation, AES, duty-cycle enforcement), see the User Manual.
+
 ## 🔍 Troubleshooting
 
 ### Common Issues
@@ -366,7 +315,7 @@ sx1262_result_t sx1262_set_modulation_params(sf, bw, cr, ldro);
 
 Always run `SelfTest.ino` first to verify wiring:
 
-```cpp
+```
 sx1262_self_test_result_t test;
 if (sx1262_self_test(&test) != SX1262_OK) {
     Serial.printf("FAILED: %s\n", test.failure_reason);
