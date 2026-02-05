@@ -4,9 +4,55 @@
 [![ESP32](https://img.shields.io/badge/ESP32-Supported-green.svg)](https://www.espressif.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Production-grade SX1262 LoRa driver for ESP32/ESP32-S3 with professional features.**
+LoRa SX1262 P2P Driver (Arduino / ESP32)
 
-A comprehensive driver suite for Semtech SX1262 LoRa transceivers, designed for high-reliability applications including IoT infrastructure.
+This repository provides a fully-featured, production-grade LoRa P2P driver for the Semtech SX1262, designed for deterministic behavior, robustness, and low-power operation on ESP32-class MCUs using the Arduino framework.
+
+Unlike many Arduino-centric LoRa libraries, this driver is built around an explicit radio state machine, strict BUSY/IRQ handling, and predictable timing, making it suitable for long-running, unattended, and reliability-critical applications.
+
+Scope note:
+This project is P2P only. LoRaWAN is intentionally out of scope.
+
+Why this driver?
+
+The table below summarizes the key design differences compared to commonly used Arduino LoRa libraries (e.g. RadioLib-based approaches):
+
+Feature / Property	This Driver	Typical Arduino LoRa Libraries
+Radio scope	SX1262 P2P only	Multi-radio, mixed scope
+Radio state machine	Explicit, enforced	Implicit / fragmented
+BUSY line handling	Strict, blocking-safe	Often partial or optimistic
+IRQ-driven RX/TX	Yes (deterministic)	Mixed polling / IRQ
+Thread / task safety (ESP32)	Designed for it	Generally not
+Dynamic memory allocation	None	Common
+Power modes	Full sleep / warm start	Limited or incomplete
+AES encryption support	Integrated	Usually external / none
+Replay protection	Built-in	Rare
+Duty-cycle enforcement (EU/FCC)	Integrated logic	User responsibility
+Failure recovery paths	Explicit	Often undefined
+Target user	Embedded / systems engineers	Rapid prototyping
+Design philosophy
+
+This driver prioritizes:
+
+Determinism over convenience
+
+Correct radio sequencing over abstraction
+
+Predictable behavior over feature breadth
+
+Long-term stability over quick demos
+
+If you are building:
+
+unattended nodes,
+
+low-power systems,
+
+safety-adjacent or infrastructure-like devices,
+
+or systems where “it usually works” is not acceptable,
+
+this driver is designed for that class of problem.
 
 ## ✨ Features
 
