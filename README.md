@@ -157,6 +157,8 @@ void loop() {
 > Both nodes must share the same frequency, SF, and BW — the defaults (`SF7 / 125 kHz / CR 4/5`) work out of the box.  
 > Need more range? Use `sx1262_init_extended()` to bump to SF10/SF12.
 
+For advanced usage (custom modulation, low-power modes, AES, duty-cycle enforcement), see the User Manual.
+
 ## 📦 Installation
 
 ### Method 1: Arduino Library Manager (Not available yet)
