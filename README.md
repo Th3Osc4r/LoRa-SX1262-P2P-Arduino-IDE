@@ -84,6 +84,78 @@ this driver is designed for that class of problem.
 - **Signal Quality Alarms** - Silent node, weak signal, irregular timing
 - **Statistics Collection** - RSSI/SNR history and trends
 
+## ⚡ Quick Start — TX/RX in 20 Lines
+
+**1. Set your board in `config.h`** — uncomment your board or define custom pins:
+
+```c
+// config.h — uncomment ONE:
+//#define BOARD_HELTEC_WIFI_LORA_32_V3
+#define BOARD_ESP32S3_WAVESHARE
+//#define BOARD_ESP32_WROOM_WAVESHARE
+//#define BOARD_CUSTOM                  // ← define your own pins below
+```
+
+**2. Transmitter sketch:**
+
+```cpp
+#include "sx1262_driver.h"
+
+void setup() {
+    Serial.begin(115200);
+    if (sx1262_init_simple(868100000, 14) != SX1262_OK) {   // 868.1 MHz, +14 dBm
+        Serial.println("Radio init failed!");
+        while (1);
+    }
+}
+
+void loop() {
+    uint8_t msg[] = "Hello LoRa!";
+    sx1262_tx_result_t tx_res;
+    if (sx1262_transmit(msg, sizeof(msg), 0, &tx_res) == SX1262_OK) {
+        Serial.printf("TX OK  %lu ms\n", tx_res.tx_duration_ms);
+    }
+    // Immediately listen for an ACK
+    uint8_t buf[255];
+    sx1262_rx_result_t rx_res;
+    if (sx1262_turnaround_tx_to_rx(buf, sizeof(buf), 1000, &rx_res) == SX1262_OK) {
+        Serial.printf("ACK!   RSSI %d dBm\n", rx_res.rssi_pkt / 2);
+    }
+    delay(3000);
+}
+```
+
+**3. Receiver sketch:**
+
+```cpp
+#include "sx1262_driver.h"
+
+void setup() {
+    Serial.begin(115200);
+    if (sx1262_init_simple(868100000, 14) != SX1262_OK) {
+        Serial.println("Radio init failed!");
+        while (1);
+    }
+}
+
+void loop() {
+    uint8_t buf[255];
+    sx1262_rx_result_t rx_res;
+    if (sx1262_receive(buf, sizeof(buf), 5000, &rx_res) == SX1262_OK) {
+        Serial.printf("RX [%d B] RSSI %d dBm : %.*s\n",
+                       rx_res.payload_length, rx_res.rssi_pkt / 2,
+                       rx_res.payload_length, buf);
+        // Respond immediately
+        uint8_t ack[] = "ACK";
+        sx1262_turnaround_rx_to_tx(ack, sizeof(ack), 0, NULL);
+    }
+}
+```
+
+> **That's it.** `sx1262_init_simple()` handles all SPI, IRQ, modulation, and errata configuration.  
+> Both nodes must share the same frequency, SF, and BW — the defaults (`SF7 / 125 kHz / CR 4/5`) work out of the box.  
+> Need more range? Use `sx1262_init_extended()` to bump to SF10/SF12.
+
 ## 📦 Installation
 
 ### Method 1: Arduino Library Manager (Not available yet)
