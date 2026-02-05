@@ -310,7 +310,7 @@ Enable verbose logging in `config.h`:
 
 ## 📋 Requirements
 
-- **MCU:** ESP32, ESP32-S3, ESP32-C3
+- **MCU:** ESP32, ESP32-S3, ESP32-C3, Heltec LoRa V3, Heltec LoRa V4
 - **Framework:** Arduino or ESP-IDF
 - **Radio:** Semtech SX1262 (or SX1261/SX1268)
 - **Arduino IDE:** 1.8.x or 2.x
@@ -318,7 +318,7 @@ Enable verbose logging in `config.h`:
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file.
+GPL 2.0 License - see [LICENSE](LICENSE) file.
 
 ## 🙏 Acknowledgments
 
