@@ -17,20 +17,21 @@ Why this driver?
 
 The table below summarizes the key design differences compared to commonly used Arduino LoRa libraries (e.g. RadioLib-based approaches):
 
-Feature / Property	This Driver	Typical Arduino LoRa Libraries
-Radio scope	SX1262 P2P only	Multi-radio, mixed scope
-Radio state machine	Explicit, enforced	Implicit / fragmented
-BUSY line handling	Strict, blocking-safe	Often partial or optimistic
-IRQ-driven RX/TX	Yes (deterministic)	Mixed polling / IRQ
-Thread / task safety (ESP32)	Designed for it	Generally not
-Dynamic memory allocation	None	Common
-Power modes	Full sleep / warm start	Limited or incomplete
-AES encryption support	Integrated	Usually external / none
-Replay protection	Built-in	Rare
-Duty-cycle enforcement (EU/FCC)	Integrated logic	User responsibility
-Failure recovery paths	Explicit	Often undefined
-Target user	Embedded / systems engineers	Rapid prototyping
-Design philosophy
+| Feature / Property              | This Driver                  | Typical Arduino LoRa Libraries |
+| ------------------------------- | ---------------------------- | ------------------------------ |
+| Radio scope                     | SX1262 P2P only              | Multi-radio, mixed scope       |
+| Radio state machine             | Explicit, enforced           | Implicit / fragmented          |
+| BUSY line handling              | Strict, blocking-safe        | Often partial or optimistic    |
+| IRQ-driven RX/TX                | Yes (deterministic)          | Mixed polling / IRQ            |
+| Thread / task safety (ESP32)    | Designed for it              | Generally not                  |
+| Dynamic memory allocation       | None                         | Common                         |
+| Power modes                     | Full sleep / warm start      | Limited or incomplete          |
+| AES encryption support          | Integrated                   | Usually external / none        |
+| Replay protection               | Built-in                     | Rare                           |
+| Duty-cycle enforcement (EU/FCC) | Integrated logic             | User responsibility            |
+| Failure recovery paths          | Explicit                     | Often undefined                |
+| Target user                     | Embedded / systems engineers | Rapid prototyping              |
+
 
 This driver prioritizes:
 
@@ -98,7 +99,7 @@ this driver is designed for that class of problem.
 
 **2. Transmitter sketch:**
 
-```cpp
+```
 #include "sx1262_driver.h"
 
 void setup() {
