@@ -643,6 +643,7 @@ sx1262_result_t sx1262_config_lora(const sx1262_lora_config_t* config) {
     memcpy(&g_driver_ctx.config, config, sizeof(sx1262_lora_config_t));
     g_driver_ctx.config.configured = true;
     g_driver_ctx.config_valid = true;
+	g_driver_ctx.radio_configured = true;  // Enable fast-path for TX/RX
     
     // Feed watchdog on complete success
     sx1262_watchdog_feed();
