@@ -33,23 +33,6 @@ The table below summarizes the key design differences compared to commonly used 
 | Target user                     | Embedded / systems engineers | Rapid prototyping              |
 
 
- +---------------------------------------------------------------------+
- |              SX1262 DRIVER TIMING BENCHMARK RESULTS                 |
- +---------------------------------------------------------------------+
- |  Board: Heltec WiFi LoRa 32 V3                                      |
- |  Frequency: 868100000 Hz   TX Power: 14 dBm                         |
- +---------------------------------------------------------------------+
- |  sx1262_init_simple():       213 ms                                 |
- |                                                                     |
- |  Wake from WARM sleep:      2571 us  (min: 2569, max: 2614)         |
- |  Wake from COLD sleep:    121082 us  (min: 121080, max: 121086)     |
- |                                                                     |
- |  TX-to-RX turnaround:         28 ms  (overhead only)                |
- +---------------------------------------------------------------------+
-The COLD wake is high because it includes sx1262_driver_deinit() + sx1262_init_simple() 
-— that's the full teardown/rebuild cycle. The raw chip wake from COLD is ~3.5 ms, but 
-the test measures the complete "sleep → usable radio" time which is more realistic.
-
 This driver prioritizes:
 
 Determinism over convenience
