@@ -313,6 +313,7 @@ sx1262_result_t sx1262_driver_init() {
     memset(&g_driver_ctx, 0, sizeof(sx1262_driver_context_t));
     memset(&g_driver_ctx.config, 0, sizeof(sx1262_lora_config_t));
     g_driver_ctx.config_valid = false;
+	g_driver_ctx.radio_configured = false;  // Require config before fast-path
     g_driver_ctx.blocking_task_handle = NULL; // Initialize handle to NULL
 
     // 1. Create Mutex
@@ -369,10 +370,33 @@ sx1262_result_t sx1262_driver_init() {
 
 sx1262_result_t sx1262_driver_deinit() {
     if (!g_driver_ctx.hardware_initialized) return SX1262_OK;
-    if (g_driver_ctx.current_state != SX1262_STATE_SLEEP) sx1262_set_state(SX1262_STATE_SLEEP);
+    
+    SX1262_LOG_INFO("[DEINIT] Deinitializing driver...\n");
+    
+    // Put radio in sleep mode for lowest power before cleanup
+    if (g_driver_ctx.current_state != SX1262_STATE_SLEEP && 
+        g_driver_ctx.current_state != SX1262_STATE_UNINITIALIZED) {
+        sx1262_set_state(SX1262_STATE_SLEEP);
+    }
+    
+    // Disable watchdog
     sx1262_watchdog_enable(false);
-    if (g_driver_ctx.mutex_initialized) { vSemaphoreDelete((SemaphoreHandle_t)g_driver_ctx.state_mutex); }
+    
+    // Release HAL resources in reverse order of initialization
+    hal_dio_deinit();         // Remove DIO1 interrupt handler
+    hal_reset_deinit();       // Reset NRESET GPIO
+    hal_spi_deinit();         // Free SPI bus - THIS WAS MISSING!
+    hal_board_power_deinit(); // Disable VEXT if applicable
+    
+    // Delete mutex
+    if (g_driver_ctx.mutex_initialized) {
+        vSemaphoreDelete((SemaphoreHandle_t)g_driver_ctx.state_mutex);
+    }
+    
+    // Clear entire context
     memset(&g_driver_ctx, 0, sizeof(sx1262_driver_context_t));
+    
+    SX1262_LOG_INFO("[DEINIT] Driver deinitialized successfully\n");
     return SX1262_OK;
 }
 
@@ -515,13 +539,21 @@ sx1262_result_t sx1262_emergency_reset() {
     if (res == SX1262_OK) {
         // 6. Restore Config (ONLY IF IT WAS VALID)
         if (had_config) {
-            sx1262_config_lora(&saved_config); 
+            sx1262_result_t config_res = sx1262_config_lora(&saved_config);
+            if (config_res != SX1262_OK) {
+                SX1262_LOG_ERROR("[EMERGENCY] Config restore failed: %d\n", config_res);
+                g_driver_ctx.radio_configured = true;  // Ensure fast-path disabled
+                // Don't return error - driver is initialized, just needs manual config
+            }
+            // Note: radio_configured is set by sx1262_config_lora() on success
+        } else {
+            g_driver_ctx.radio_configured = false;  // No config to restore
         }
     } else {
         g_driver_ctx.current_state = SX1262_STATE_ERROR;
+        g_driver_ctx.radio_configured = false;
     }
-    
-    return res;
+	return res;
 }
 
 // ============================================================================
@@ -577,7 +609,7 @@ void sx1262_print_transition_history() {
 }
 
 // ============================================================================
-// PHASE 2.1: TX OPERATIONS (Refactored Phase 1.3: Auto-Recovery)
+// PHASE 2.1: TX OPERATIONS (Optimized with Fast-Path)
 // ============================================================================
 sx1262_result_t sx1262_transmit(const uint8_t* payload, uint8_t length, uint32_t timeout_ms, sx1262_tx_result_t* result) {
     if (result) memset(result, 0, sizeof(sx1262_tx_result_t));
@@ -604,27 +636,8 @@ sx1262_result_t sx1262_transmit(const uint8_t* payload, uint8_t length, uint32_t
     }
     if (!g_driver_ctx.config_valid) return SX1262_ERROR_INVALID_PARAM;
 
-    // 5. Setup
-    spi_clear_device_errors();
-    
-    // External config file usage -> math helpers might be in there too?
-    // Assuming ToA math helper is in this file or available.
-    // If linker error occurs here on math, we'll need to duplicate math helper.
-    // Assuming math helper IS in here based on original file.
-    // Wait, original file had `sx1262_get_time_on_air_ms` declared/defined?
-    // User error log showed it was defined in both. So it must be in another file.
-    // I will call it, assuming it links from config file.
-    uint32_t toa_ms = 200; // Fallback if math fails? No, let's assume valid link.
-    // Actually, to be safe against linker errors, I will use a hardcoded safe timeout if I can't call the function.
-    // But better to trust the linker.
-    // Checking previous logs... "multiple definition of sx1262_get_time_on_air_ms"
-    // So it IS in config.cpp.
-    // I will NOT define it here.
-    
-    // PROBLEM: How to call it if I don't include the header for it? 
-    // It's in sx1262_driver.h which IS included. So I can call it.
-    toa_ms = sx1262_get_time_on_air_ms(&g_driver_ctx.config, length);
-    
+    // 5. Calculate timing
+    uint32_t toa_ms = sx1262_get_time_on_air_ms(&g_driver_ctx.config, length);
     uint32_t actual_timeout = (timeout_ms == 0 || timeout_ms < toa_ms * 1.5) ? (toa_ms + toa_ms/2 + 500) : timeout_ms;
     
     if (result) {
@@ -633,78 +646,97 @@ sx1262_result_t sx1262_transmit(const uint8_t* payload, uint8_t length, uint32_t
         result->timeout_used_ms = actual_timeout;
     }
 
-    // 6. Buffer Ops
-    spi_set_buffer_base_address(0, 128);
-    spi_write_buffer(0, payload, length);
-    spi_clear_irq_status(0xFFFF);
-    
-    // 7. Config Ops
-    // WARNING: SetPacketType resets all packet parameters to defaults! [Datasheet 13.4.2]
-    // We MUST re-apply them immediately after to ensure Explicit Header, CRC, etc. are active.
-    uint8_t lora_type = PACKET_TYPE_LORA;
-    spi_cmd(SX1262_OP_SET_PACKET_TYPE, &lora_type, 1, NULL, 0, 0, NULL);
-    hal_delay_ms(5); // Wait for mode change
-    
-    // CRITICAL FIX: Re-apply Packet Params immediately
-    uint8_t pkt_params[6] = {
-        (uint8_t)(g_driver_ctx.config.preamble_length >> 8),
-        (uint8_t)(g_driver_ctx.config.preamble_length & 0xFF),
-        (uint8_t)g_driver_ctx.config.header_type,
-        length,  // <--- CRITICAL: Set actual payload length for this transmission
-        (uint8_t)g_driver_ctx.config.crc_type,
-        (uint8_t)g_driver_ctx.config.invert_iq
-    };
-    spi_cmd(SX1262_OP_SET_PACKET_PARAMS, pkt_params, 6, NULL, 0, 0, NULL);
+    // =========================================================================
+    // FAST PATH vs SLOW PATH
+    // =========================================================================
+    if (g_driver_ctx.radio_configured) {
+		// FAST PATH: Radio is configured, minimal SPI commands
+		spi_clear_irq_status(0xFFFF);
+		spi_write_buffer(0, payload, length);
+		
+		// SetPacketParams needed (payload length changes per packet)
+		uint8_t pkt_params[6] = {
+			(uint8_t)(g_driver_ctx.config.preamble_length >> 8),
+			(uint8_t)(g_driver_ctx.config.preamble_length & 0xFF),
+			(uint8_t)g_driver_ctx.config.header_type,
+			length,
+			(uint8_t)g_driver_ctx.config.crc_type,
+			(uint8_t)g_driver_ctx.config.invert_iq
+		};
+		spi_cmd(SX1262_OP_SET_PACKET_PARAMS, pkt_params, 6, NULL, 0, 0, NULL);
+		
+		// IRQ config MUST be called every TX
+		spi_set_dio_irq_params(
+			IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
+			IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
+			0, 0
+		);
+    } else {
+        // SLOW PATH: Full configuration (after reset, error, etc.)
+        SX1262_LOG_INFO("[TX] Slow path - full reconfiguration\n");
+        
+        spi_clear_device_errors();
+        spi_set_buffer_base_address(0, 128);
+        spi_write_buffer(0, payload, length);
+        spi_clear_irq_status(0xFFFF);
+        
+        uint8_t lora_type = PACKET_TYPE_LORA;
+        spi_cmd(SX1262_OP_SET_PACKET_TYPE, &lora_type, 1, NULL, 0, 0, NULL);
+        
+        uint8_t pkt_params[6] = {
+            (uint8_t)(g_driver_ctx.config.preamble_length >> 8),
+            (uint8_t)(g_driver_ctx.config.preamble_length & 0xFF),
+            (uint8_t)g_driver_ctx.config.header_type,
+            length,
+            (uint8_t)g_driver_ctx.config.crc_type,
+            (uint8_t)g_driver_ctx.config.invert_iq
+        };
+        spi_cmd(SX1262_OP_SET_PACKET_PARAMS, pkt_params, 6, NULL, 0, 0, NULL);
 
-    // Configure Interrupts
-    spi_set_dio_irq_params(
-        IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT, // IRQ Mask
-        IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT, // DIO1 Mask
-        0, 0                             // DIO2, DIO3
-    );
-
-    // 8. Atomic Transition to STANDBY_XOSC (RESTORED FROM WORKING POLLING DRIVER)
-    if (g_driver_ctx.current_state != SX1262_STATE_STANDBY_XOSC) {
-        if (_internal_set_state(SX1262_STATE_STANDBY_XOSC) != SX1262_OK) return SX1262_ERROR_HARDWARE;
-        hal_delay_ms(5);
+        spi_set_dio_irq_params(
+            IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
+            IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
+            0, 0
+        );
+        
+        // After successful slow path, mark as configured for next time
+        g_driver_ctx.radio_configured = true;
     }
 
-    // 9. PREPARE FOR WAIT (Phase 3)
-    // Clear notification state
+    // 6. State transition to STANDBY_XOSC if needed
+    if (g_driver_ctx.current_state != SX1262_STATE_STANDBY_XOSC) {
+        if (_internal_set_state(SX1262_STATE_STANDBY_XOSC) != SX1262_OK) return SX1262_ERROR_HARDWARE;
+    }
+
+    // 7. PREPARE FOR WAIT (Phase 3)
     ulTaskNotifyTake(pdTRUE, 0);
-    // Register task handle
     g_driver_ctx.blocking_task_handle = xTaskGetCurrentTaskHandle();
 
-    // 10. Atomic Transition to TX State
+    // 8. Atomic Transition to TX State
     sx1262_result_t state_res = _internal_set_state(SX1262_STATE_TX);
     if (state_res != SX1262_OK) {
         g_driver_ctx.blocking_task_handle = NULL;
         return state_res;
     }
 
-    // 11. Send Hardware TX Command
+    // 9. Send Hardware TX Command
     spi_result_t spi_res = spi_set_tx(actual_timeout * 1000);
     if (spi_res != SPI_OK) {
-        _internal_set_state(SX1262_STATE_STANDBY_RC); // Recover
+        _internal_set_state(SX1262_STATE_STANDBY_RC);
         g_driver_ctx.blocking_task_handle = NULL;
         return SX1262_ERROR_SPI;
     }
 
-    // 12. WAIT FOR INTERRUPT (Phase 3 Replacement for Polling)
-    // Block until ISR fires or timeout
-    uint32_t wait_ticks = pdMS_TO_TICKS(actual_timeout + 50); // Small buffer
-    uint32_t notif_value = ulTaskNotifyTake(pdTRUE, wait_ticks);
-    
-    // Clear handle
+    // 10. WAIT FOR INTERRUPT
+    uint32_t wait_ticks = pdMS_TO_TICKS(actual_timeout + 50);
+    ulTaskNotifyTake(pdTRUE, wait_ticks);
     g_driver_ctx.blocking_task_handle = NULL;
 
-    // 13. CHECK STATUS
+    // 11. CHECK STATUS
     uint16_t irq_status = 0;
     spi_get_irq_status(&irq_status);
     
-    // Check if we really finished
     bool tx_done = (irq_status & IRQ_TX_DONE);
-    bool hw_timeout = (irq_status & IRQ_RX_TX_TIMEOUT);
     
     if (result) {
         result->tx_done_ms = hal_get_time_ms();
@@ -715,15 +747,13 @@ sx1262_result_t sx1262_transmit(const uint8_t* payload, uint8_t length, uint32_t
     }
 
     spi_clear_irq_status(0xFFFF);
-
-    // 14. Atomic Return to Standby
     _internal_set_state(SX1262_STATE_STANDBY_RC);
 
     return tx_done ? SX1262_OK : SX1262_ERROR_TIMEOUT;
 }
 
 // ============================================================================
-// PHASE 2.2: RX OPERATIONS (Refactored Phase 1.3: Auto-Recovery)
+// PHASE 2.2: RX OPERATIONS (Optimized with Fast-Path)
 // ============================================================================
 sx1262_result_t sx1262_receive(
     uint8_t* payload, 
@@ -762,30 +792,48 @@ sx1262_result_t sx1262_receive(
         return SX1262_ERROR_INVALID_STATE;
     }
 
-    spi_clear_device_errors();
-    spi_set_buffer_base_address(0, 128);
-    spi_clear_irq_status(0xFFFF);
-    
-    uint8_t lora_type = PACKET_TYPE_LORA;
-    spi_cmd(SX1262_OP_SET_PACKET_TYPE, &lora_type, 1, NULL, 0, 0, NULL);
-    hal_delay_ms(5);
-
-    uint8_t pkt_params[6] = {
-        (uint8_t)(g_driver_ctx.config.preamble_length >> 8),    // Preamble MSB
-        (uint8_t)(g_driver_ctx.config.preamble_length & 0xFF),  // Preamble LSB
-        (uint8_t)g_driver_ctx.config.header_type,               // 0x00 = Explicit header
-        g_driver_ctx.config.payload_length,                      // Max receivable length
-        (uint8_t)g_driver_ctx.config.crc_type,                  // CRC ON/OFF
-        (uint8_t)g_driver_ctx.config.invert_iq                  // IQ polarity
-    };
-    
-    spi_cmd(SX1262_OP_SET_PACKET_PARAMS, pkt_params, 6, NULL, 0, 0, NULL);
-    hal_delay_ms(1);
-    
+    // IRQ configuration command (used in slow path and errata workaround)
     uint8_t irq_cmd[9] = {0x08, 0x02, 0x42, 0x02, 0x42, 0x00, 0x00, 0x00, 0x00};
-    hal_spi_cs_assert(1); hal_spi_transfer(irq_cmd, NULL, 9); hal_spi_cs_assert(0);
-    hal_delay_ms(1);
 
+    // =========================================================================
+    // FAST PATH vs SLOW PATH
+    // =========================================================================
+    if (g_driver_ctx.radio_configured) {
+        // FAST PATH: Radio is configured, minimal SPI commands
+        spi_clear_irq_status(0xFFFF);
+		
+		// IRQ config MUST be called every RX
+		
+		hal_spi_cs_assert(1); hal_spi_transfer(irq_cmd, NULL, 9); hal_spi_cs_assert(0);
+		
+    } else {
+        // SLOW PATH: Full configuration
+        SX1262_LOG_INFO("[RX] Slow path - full reconfiguration\n");
+        
+        spi_clear_device_errors();
+        spi_set_buffer_base_address(0, 128);
+        spi_clear_irq_status(0xFFFF);
+        
+        uint8_t lora_type = PACKET_TYPE_LORA;
+        spi_cmd(SX1262_OP_SET_PACKET_TYPE, &lora_type, 1, NULL, 0, 0, NULL);
+
+        uint8_t pkt_params[6] = {
+            (uint8_t)(g_driver_ctx.config.preamble_length >> 8),
+            (uint8_t)(g_driver_ctx.config.preamble_length & 0xFF),
+            (uint8_t)g_driver_ctx.config.header_type,
+            g_driver_ctx.config.payload_length,
+            (uint8_t)g_driver_ctx.config.crc_type,
+            (uint8_t)g_driver_ctx.config.invert_iq
+        };
+        spi_cmd(SX1262_OP_SET_PACKET_PARAMS, pkt_params, 6, NULL, 0, 0, NULL);
+
+        hal_spi_cs_assert(1); hal_spi_transfer(irq_cmd, NULL, 9); hal_spi_cs_assert(0);
+        
+        // After successful slow path, mark as configured
+        g_driver_ctx.radio_configured = true; 
+    }
+
+    // Calculate timeout
     uint32_t timeout_with_margin = timeout_ms + (timeout_ms / 10) + 100;
     uint32_t timeout_steps = timeout_with_margin * 64;  
     
@@ -793,12 +841,13 @@ sx1262_result_t sx1262_receive(
     if (timeout_steps > 0xFFFFFE) timeout_steps = 0xFFFFFE; 
     
     uint8_t rx_cmd[4] = {
-        SX1262_OP_SET_RX,                      // 0x82
-        (uint8_t)((timeout_steps >> 16) & 0xFF),  // Timeout MSB
-        (uint8_t)((timeout_steps >> 8) & 0xFF),   // Timeout MID
-        (uint8_t)(timeout_steps & 0xFF)           // Timeout LSB
+        SX1262_OP_SET_RX,
+        (uint8_t)((timeout_steps >> 16) & 0xFF),
+        (uint8_t)((timeout_steps >> 8) & 0xFF),
+        (uint8_t)(timeout_steps & 0xFF)
     };
     
+    // Wait for BUSY
     uint32_t busy_start = hal_get_time_ms();
     while (hal_gpio_read(PIN_SX1262_BUSY)) {
         if (hal_get_time_ms() - busy_start > 100) {
@@ -808,13 +857,10 @@ sx1262_result_t sx1262_receive(
         }
     }
     
-    // PREPARE NOTIFY (Phase 3)
+    // PREPARE NOTIFY
     ulTaskNotifyTake(pdTRUE, 0);
     g_driver_ctx.blocking_task_handle = xTaskGetCurrentTaskHandle();
 
-    // =========================================================================
-    // FIX (v2): Capture RX start time for timing diagnostics
-    // =========================================================================
     uint32_t rx_start_ms = hal_get_time_ms();
     if (result) {
         result->rx_start_ms = rx_start_ms;
@@ -830,21 +876,18 @@ sx1262_result_t sx1262_receive(
     g_driver_ctx.current_state = SX1262_STATE_RX;
     g_driver_ctx.state_entry_time_ms = hal_get_time_ms();
     
-    // Errata 15.2 WORKAROUND (Preserved)
-    hal_delay_ms(1);
+    // Errata 15.2 WORKAROUND (keep this - it's necessary)
+    hal_delay_us(500);
     hal_spi_cs_assert(1); hal_spi_transfer(irq_cmd, NULL, 9); hal_spi_cs_assert(0);
-    hal_delay_ms(1);
+    hal_delay_us(500);
     
     spi_clear_irq_status(0xFFFF);
 
-    // WAIT (Phase 3 Replacement)
+    // WAIT
     uint32_t wait_ticks = pdMS_TO_TICKS(timeout_ms + 100);
     ulTaskNotifyTake(pdTRUE, wait_ticks);
     g_driver_ctx.blocking_task_handle = NULL;
 
-    // =========================================================================
-    // FIX (v2): Capture RX done time for timing diagnostics
-    // =========================================================================
     uint32_t rx_done_ms = hal_get_time_ms();
     if (result) {
         result->rx_done_ms = rx_done_ms;
@@ -857,21 +900,11 @@ sx1262_result_t sx1262_receive(
     bool rx_done = (irq & IRQ_RX_DONE);
     bool crc_err = (irq & IRQ_CRC_ERROR);
 
-    if (rx_done) { 
-        hal_delay_ms(3); // Preserved buffer delay
-    }
-
     if (rx_done && !crc_err) {
         uint8_t len = 0, offset = 0;
         spi_get_rx_buffer_status(&len, &offset);
         
         SX1262_LOG_INFO("[RX] Buffer status: PayloadLength=%d, Offset=%d\n", len, offset);
-        
-        if (len == 0) {
-            SX1262_LOG_WARN("[RX] WARNING: Received payload length is 0\n");
-        } else if (len == 255 && g_driver_ctx.config.header_type == SX1262_LORA_HEADER_EXPLICIT) {
-            SX1262_LOG_WARN("[RX] WARNING: Length=255 in explicit header mode - header may not have been parsed\n");
-        }
         
         if (len > max_length) {
             SX1262_LOG_WARN("[RX] Truncating payload from %d to %d bytes\n", len, max_length);
@@ -1158,6 +1191,11 @@ sx1262_result_t sx1262_sleep(sx1262_sleep_mode_t mode) {
     
     // Update driver state
     g_driver_ctx.current_state = SX1262_STATE_SLEEP;
+    
+    // COLD sleep loses radio configuration
+    if (mode == SX1262_SLEEP_COLD) {
+        g_driver_ctx.radio_configured = false;  // Will need full reconfig on wake
+    }
     
     SX1262_LOG_INFO("[SLEEP] Entered %s sleep mode\n", 
                     (mode == SX1262_SLEEP_WARM) ? "WARM" : "COLD");

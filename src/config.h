@@ -20,8 +20,8 @@
 // BOARD SELECTION - Uncomment exactly ONE option
 // ============================================================================
 
-//#define BOARD_HELTEC_WIFI_LORA_32_V3      // Heltec WiFi LoRa 32 V3 (integrated SX1262)
-#define BOARD_ESP32S3_WAVESHARE           // ESP32-S3 + Waveshare SX1262 HF module  
+#define BOARD_HELTEC_WIFI_LORA_32_V3      // Heltec WiFi LoRa 32 V3 (integrated SX1262)
+//#define BOARD_ESP32S3_WAVESHARE           // ESP32-S3 + Waveshare SX1262 HF module  
 //#define BOARD_ESP32_WROOM_WAVESHARE       // ESP32-WROOM + Waveshare SX1262 HF module
 //#define BOARD_CUSTOM                        // Custom board - define pins manually below
 
@@ -236,7 +236,7 @@
 //#define SX1262_LOG_LEVEL SX1262_LOG_LEVEL_NONE
 //#define SX1262_LOG_LEVEL SX1262_LOG_LEVEL_ERROR
 //#define SX1262_LOG_LEVEL SX1262_LOG_LEVEL_WARN
-#define SX1262_LOG_LEVEL SX1262_LOG_LEVEL_INFO
+//#define SX1262_LOG_LEVEL SX1262_LOG_LEVEL_INFO
 //#define SX1262_LOG_LEVEL SX1262_LOG_LEVEL_DEBUG
 
 // ----------------------------------------------------------------------------

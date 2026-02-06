@@ -256,6 +256,7 @@ typedef struct {
     // Radio configuration (Phase 1.2)
     sx1262_lora_config_t config;
     bool config_valid;
+	bool radio_configured;
     
     // Power management (Phase 3.1)
     sx1262_power_state_t power;
