@@ -15,7 +15,7 @@ This project is P2P only. LoRaWAN is intentionally out of scope.
 
 Why this driver?
 
-The table below summarizes the key design differences compared to commonly used Arduino LoRa libraries (e.g. RadioLib-based approaches):
+The table below summarizes the key design characteristics of this driver:
 
 | Feature | SX1262-P2P Driver |
 |---------|-------------------|
