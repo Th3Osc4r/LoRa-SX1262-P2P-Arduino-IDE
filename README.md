@@ -26,12 +26,13 @@ The table below summarizes the key design characteristics of this driver:
 | Thread / task safety (ESP32) | Mutex guards (FreeRTOS) |
 | Dynamic memory allocation | None |
 | Power modes | WARM sleep (config retained) / COLD sleep (lowest power) |
-| AES encryption | Integrated (AES-128-CTR) |
-| Replay protection | Built-in (monotonic counter) |
+| AES encryption | Integrated (AES-128-CTR)* |
+| Replay protection | Built-in (monotonic counter)* |
 | Duty-cycle enforcement | Integrated (EU/FCC) |
 | Failure recovery | Watchdog + emergency reset |
 | Target user | Embedded / systems engineers |
 
+*Security features are intended for link-layer protection and are not a replacement for a full cryptographic protocol.
 
 This driver prioritizes:
 
@@ -56,6 +57,8 @@ or systems where “it usually works” is not acceptable,
 this driver is designed for that class of problem.
 
 ## ✨ Features
+
+This library exposes the full SX1262 radio lifecycle with strict state enforcement, integrated regulatory limits, and optional security layers.
 
 ### Core Driver
 - **State Machine Architecture** - Enforced valid state transitions
@@ -122,54 +125,6 @@ lib_deps =
     Th3Osc4r/LoRa-SX1262-P2P
 ```
 
-## 🔧 Configuration
-
-### Step 1: Select Your Board
-
-Edit `config.h` in the library's `src/` folder and uncomment **exactly one** board preset:
-
-```
-// ============================================================================
-// BOARD SELECTION - Uncomment exactly ONE
-// ============================================================================
-#define BOARD_HELTEC_WIFI_LORA_32_V3      // Heltec V3 with integrated SX1262
-//#define BOARD_ESP32S3_WAVESHARE           // ESP32-S3 + Waveshare module
-//#define BOARD_ESP32_WROOM_WAVESHARE       // ESP32 WROOM + Waveshare module
-//#define BOARD_CUSTOM                       // Manual pin configuration
-```
-
-### Step 2: Custom Board Configuration
-
-If using `BOARD_CUSTOM`, define your pin mappings:
-
-```
-#define BOARD_CUSTOM
-#define BOARD_NAME "My Custom Board"
-
-// SPI Pins
-#define PIN_SX1262_MOSI     23
-#define PIN_SX1262_MISO     19
-#define PIN_SX1262_SCK      18
-#define PIN_SX1262_CS       5
-
-// Control Pins
-#define PIN_SX1262_NRESET   16
-#define PIN_SX1262_BUSY     4
-#define PIN_SX1262_DIO1     17
-
-// SPI Host (ESP32: VSPI_HOST, ESP32-S3: SPI2_HOST)
-#define SPI_HOST_ID         VSPI_HOST
-```
-
-### Supported Boards
-
-| Board | Preset Define | MCU |
-|:------|:--------------|:----|
-| Heltec WiFi LoRa 32 V3 | `BOARD_HELTEC_WIFI_LORA_32_V3` | ESP32-S3 |
-| ESP32-S3 + Waveshare SX1262 | `BOARD_ESP32S3_WAVESHARE` | ESP32-S3 |
-| ESP32 WROOM + Waveshare SX1262 | `BOARD_ESP32_WROOM_WAVESHARE` | ESP32 |
-| Custom | `BOARD_CUSTOM` | Any ESP32 |
-
 ## 🚀 Quick Start
 
 ### Basic Transmitter
@@ -224,6 +179,54 @@ void loop() {
     }
 }
 ```
+
+## 🔧 Configuration
+
+### Step 1: Select Your Board
+
+Edit `config.h` in the library's `src/` folder and uncomment **exactly one** board preset:
+
+```
+// ============================================================================
+// BOARD SELECTION - Uncomment exactly ONE
+// ============================================================================
+#define BOARD_HELTEC_WIFI_LORA_32_V3      // Heltec V3 with integrated SX1262
+//#define BOARD_ESP32S3_WAVESHARE           // ESP32-S3 + Waveshare module
+//#define BOARD_ESP32_WROOM_WAVESHARE       // ESP32 WROOM + Waveshare module
+//#define BOARD_CUSTOM                       // Manual pin configuration
+```
+
+### Step 2: Custom Board Configuration
+
+If using `BOARD_CUSTOM`, define your pin mappings: (Exactly one board preset must be enabled. Multiple definitions will cause undefined behavior.)
+
+```
+#define BOARD_CUSTOM
+#define BOARD_NAME "My Custom Board"
+
+// SPI Pins
+#define PIN_SX1262_MOSI     23
+#define PIN_SX1262_MISO     19
+#define PIN_SX1262_SCK      18
+#define PIN_SX1262_CS       5
+
+// Control Pins
+#define PIN_SX1262_NRESET   16
+#define PIN_SX1262_BUSY     4
+#define PIN_SX1262_DIO1     17
+
+// SPI Host (ESP32: VSPI_HOST, ESP32-S3: SPI2_HOST)
+#define SPI_HOST_ID         VSPI_HOST
+```
+
+### Supported Boards
+
+| Board | Preset Define | MCU |
+|:------|:--------------|:----|
+| Heltec WiFi LoRa 32 V3 | `BOARD_HELTEC_WIFI_LORA_32_V3` | ESP32-S3 |
+| ESP32-S3 + Waveshare SX1262 | `BOARD_ESP32S3_WAVESHARE` | ESP32-S3 |
+| ESP32 WROOM + Waveshare SX1262 | `BOARD_ESP32_WROOM_WAVESHARE` | ESP32 |
+| Custom | `BOARD_CUSTOM` | Any ESP32 |
 
 ## 📖 Examples
 
@@ -319,7 +322,7 @@ Enable verbose logging in `config.h`:
 
 - **MCU:** ESP32, ESP32-S3, ESP32-C3, Heltec LoRa V3, Heltec LoRa V4
 - **Framework:** Arduino or ESP-IDF
-- **Radio:** Semtech SX1262 (or SX1261/SX1268)
+- **Radio:** Semtech SX1262
 - **Arduino IDE:** 1.8.x or 2.x
 - **ESP32 Board Package:** 2.0.0+
 
