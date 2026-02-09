@@ -297,6 +297,8 @@ For advanced usage (custom modulation, AES, duty-cycle enforcement), see the Use
 | TX duration 2× expected | Update to v2.0+ (TX timing fix) |
 | RSSI values look wrong | Divide `rssi_pkt` by 2 for dBm |
 
+Always verify antenna matching and regional frequency legality before transmitting.
+
 ### Hardware Self-Test
 
 Always run `SelfTest.ino` first to verify wiring:
