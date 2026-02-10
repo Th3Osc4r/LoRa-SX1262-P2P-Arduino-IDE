@@ -32,7 +32,7 @@ The table below summarizes the key design characteristics of this driver:
 | Failure recovery | Watchdog + emergency reset |
 | Target user | Embedded / systems engineers |
 
-*Security features are intended for link-layer protection and are not a replacement for a full cryptographic protocol.
+*Security features: complete encrypt-then-transmit / receive-then-decrypt pipeline with replay protection, hardware acceleration support, and clean portability across platforms.
 
 This driver prioritizes:
 
