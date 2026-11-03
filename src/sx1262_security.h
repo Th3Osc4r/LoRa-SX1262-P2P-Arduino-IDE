@@ -3,11 +3,12 @@
 
 /**
  * @file sx1262_security.h
- * @brief Optional encryption module for SX1262 LoRa driver suite
+ * @brief Optional authenticated encryption module for SX1262 LoRa driver suite
  * 
- * This module provides AES-128-CTR encryption with replay protection for
- * LoRa payloads. It is designed as a standalone, optional layer that
- * wraps payloads before transmission and unwraps them after reception.
+ * This module provides AES-128-CCM authenticated encryption with replay
+ * protection for LoRa payloads. It is designed as a standalone, optional
+ * layer that wraps payloads before transmission and unwraps them after
+ * reception.
  * 
  * Architecture:
  * @code
@@ -24,20 +25,21 @@
  * @endcode
  * 
  * Features:
- *   - AES-128-CTR encryption (stream cipher, no padding)
+ *   - AES-128-CCM authenticated encryption (confidentiality + integrity)
+ *   - 4-byte MAC tag for message integrity verification
  *   - 4-byte explicit counter for replay protection
  *   - Platform-agnostic (uses crypto HAL abstraction)
  *   - Zero overhead when disabled (compile-time option)
- *   - Designed for constrained LoRa payloads (1-251 bytes after header)
+ *   - Designed for constrained LoRa payloads (1-247 bytes after overhead)
  * 
  * Packet Structure (Secured):
  * @code
- *   Byte:  0    1    2    3    4    5    ...   N
- *         [-- Counter (4B) --][-- Encrypted Payload --]
- *         ^                   ^
- *         |                   |
- *         Plaintext           AES-128-CTR encrypted
- *         (for IV derivation)
+ *   Byte:  0    1    2    3    4    5    ...   N   N+1  ...  N+4
+ *         [-- Counter (4B) --][- Encrypted Payload -][- MAC Tag (4B) -]
+ *         ^                   ^                       ^
+ *         |                   |                       |
+ *         Plaintext (AAD)     AES-128-CCM encrypted   Authentication tag
+ *         (for nonce + auth)
  * @endcode
  * 
  * Usage Example:
@@ -62,9 +64,12 @@
  *   sx1262_rx_result_t rx_result;
  *   if (sx1262_receive(rx_buffer, sizeof(rx_buffer), 5000, &rx_result) == SX1262_OK) {
  *       uint8_t payload_len;
- *       if (sx1262_secure_unpack(&sec_ctx, rx_buffer, rx_result.payload_length, &payload_len) == SX1262_SEC_OK) {
- *           // rx_buffer now contains decrypted payload
- *           // payload_len is the original payload length
+ *       sx1262_security_result_t sec_res = sx1262_secure_unpack(&sec_ctx, rx_buffer,
+ *                                              rx_result.payload_length, &payload_len);
+ *       if (sec_res == SX1262_SEC_OK) {
+ *           // rx_buffer now contains authenticated, decrypted payload
+ *       } else if (sec_res == SX1262_SEC_ERROR_AUTH_FAILED) {
+ *           // Packet was tampered with — discard!
  *       }
  *   }
  * @endcode
@@ -72,17 +77,18 @@
  * Security Considerations:
  *   - Key must be pre-shared securely (not transmitted over LoRa)
  *   - Counter must never repeat with same key (save to NVS on reboot)
- *   - This provides confidentiality, NOT authentication (no MIC/MAC)
- *   - For authenticated encryption, consider future AES-CCM extension
+ *   - Provides confidentiality AND authentication via AES-128-CCM
+ *   - 4-byte MAC tag: ~1 in 4 billion forgery probability per attempt
  * 
  * @author Oscar / Claude
- * @date December 2024
- * @version 1.0.0
+ * @date December 2024 (CCM upgrade: February 2025)
+ * @version 2.0.0
  */
 
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -93,17 +99,38 @@ extern "C" {
 // ============================================================================
 
 /**
- * @brief Maximum payload size that can be secured
- * 
- * LoRa max payload is 255 bytes. With 4-byte counter header,
- * maximum application payload is 251 bytes.
- */
-#define SX1262_SEC_MAX_PAYLOAD_SIZE     251
-
-/**
  * @brief Security header size (counter)
  */
 #define SX1262_SEC_HEADER_SIZE          4
+
+/**
+ * @brief MAC tag size for authenticated encryption (bytes)
+ * 
+ * CCM supports 4, 6, 8, 10, 12, 14, or 16 byte tags.
+ * 4 bytes recommended for LoRa: ~1 in 4 billion forgery probability,
+ * minimal airtime overhead (often zero additional LoRa symbols).
+ * 8 bytes for higher security at cost of ~10-16% more airtime.
+ * 
+ * Can be overridden in config.h:
+ *   #define SX1262_SEC_MAC_SIZE  8   // Use 8-byte tags
+ */
+#ifndef SX1262_SEC_MAC_SIZE
+#define SX1262_SEC_MAC_SIZE             4
+#endif
+
+/**
+ * @brief Total security overhead (counter + MAC tag)
+ */
+#define SX1262_SEC_OVERHEAD             (SX1262_SEC_HEADER_SIZE + SX1262_SEC_MAC_SIZE)
+
+/**
+ * @brief Maximum payload size that can be secured
+ * 
+ * LoRa max payload is 255 bytes. With 4-byte counter header and
+ * MAC tag, maximum application payload is (255 - overhead) bytes.
+ * Default: 255 - 4 (counter) - 4 (MAC) = 247 bytes
+ */
+#define SX1262_SEC_MAX_PAYLOAD_SIZE     (255 - SX1262_SEC_OVERHEAD)
 
 /**
  * @brief AES-128 key size
@@ -111,14 +138,15 @@ extern "C" {
 #define SX1262_SEC_KEY_SIZE             16
 
 /**
- * @brief Nonce size (static portion of IV)
+ * @brief Nonce size (used directly as CCM nonce)
  * 
- * IV = [4-byte counter][12-byte nonce]
+ * CCM nonce: 12 bytes (standard). The counter is passed as AAD
+ * rather than being embedded in the nonce.
  */
 #define SX1262_SEC_NONCE_SIZE           12
 
 /**
- * @brief Full IV size for AES-CTR
+ * @brief Full IV size for AES-CTR (legacy, retained for compatibility)
  */
 #define SX1262_SEC_IV_SIZE              16
 
@@ -146,7 +174,8 @@ typedef enum {
     SX1262_SEC_ERROR_CRYPTO = -5,           ///< Crypto HAL operation failed
     SX1262_SEC_ERROR_REPLAY = -6,           ///< Replay attack detected (counter too old)
     SX1262_SEC_ERROR_COUNTER_OVERFLOW = -7, ///< TX counter overflow (need new key)
-    SX1262_SEC_ERROR_MALFORMED = -8         ///< Received packet too short or malformed
+    SX1262_SEC_ERROR_MALFORMED = -8,        ///< Received packet too short or malformed
+    SX1262_SEC_ERROR_AUTH_FAILED = -9       ///< MAC verification failed (tampered packet!)
 } sx1262_security_result_t;
 
 // ============================================================================
@@ -264,6 +293,7 @@ typedef struct {
     uint32_t packets_encrypted;                 ///< Total packets encrypted
     uint32_t packets_decrypted;                 ///< Total packets successfully decrypted
     uint32_t replay_rejections;                 ///< Packets rejected due to replay detection
+    uint32_t auth_failures;                     ///< Packets rejected due to MAC verification failure
     uint32_t storage_saves;                     ///< Successful storage saves
     uint32_t storage_failures;                  ///< Failed storage operations
     
@@ -450,42 +480,45 @@ bool sx1262_security_is_enabled(const sx1262_security_context_t* ctx);
 // ============================================================================
 
 /**
- * @brief Pack (encrypt) a payload for transmission
+ * @brief Pack (encrypt + authenticate) a payload for transmission
  * 
- * Prepends the counter and encrypts the payload in-place.
+ * Prepends the counter, encrypts the payload, and appends MAC tag in-place.
+ * Uses AES-128-CCM: counter is authenticated as AAD, payload is encrypted,
+ * and a 4-byte MAC tag provides integrity verification.
  * 
  * Before: buffer = [Payload (N bytes)]
- * After:  buffer = [Counter (4B)][Encrypted Payload (N bytes)]
+ * After:  buffer = [Counter (4B)][Encrypted Payload (N bytes)][MAC Tag (4B)]
  * 
  * @param ctx           Pointer to initialized security context
- * @param buffer        Buffer containing payload, must have room for 4 extra bytes at front
+ * @param buffer        Buffer containing payload, must have room for
+ *                      SX1262_SEC_OVERHEAD (8) extra bytes
  *                      On success, contains secured packet ready for transmission
- * @param payload_len   Length of the original payload (1-251 bytes)
- * @param out_total_len Pointer to receive total secured packet length (payload_len + 4)
+ * @param payload_len   Length of the original payload (1-247 bytes)
+ * @param out_total_len Pointer to receive total secured packet length
+ *                      (payload_len + SX1262_SEC_OVERHEAD)
  * 
  * @return SX1262_SEC_OK on success
  * @return SX1262_SEC_ERROR_NOT_INITIALIZED if context not initialized
  * @return SX1262_SEC_ERROR_INVALID_PARAM if buffer or out_total_len is NULL
- * @return SX1262_SEC_ERROR_PAYLOAD_TOO_LARGE if payload_len > 251
+ * @return SX1262_SEC_ERROR_PAYLOAD_TOO_LARGE if payload_len > 247
  * @return SX1262_SEC_ERROR_COUNTER_OVERFLOW if TX counter would overflow
  * @return SX1262_SEC_ERROR_CRYPTO if encryption failed
  * 
  * @note The TX counter is incremented on successful encryption
- * @note If security is disabled, just copies payload (no encryption/counter)
+ * @note If security is disabled, just copies payload (no encryption/counter/tag)
  * 
- * @warning The buffer must have at least (payload_len + SX1262_SEC_HEADER_SIZE) bytes capacity
+ * @warning The buffer must have at least (payload_len + SX1262_SEC_OVERHEAD) bytes capacity
  * 
  * Example:
  * @code
- *   uint8_t buffer[64];  // Must be larger than payload
+ *   uint8_t buffer[64];  // Must be larger than payload + 8
  *   uint8_t payload[] = {0x01, 0x02, 0x03};
  *   
- *   // Copy payload to buffer (leaving room at front for header)
  *   memcpy(buffer, payload, sizeof(payload));
  *   
  *   uint8_t secure_len;
  *   sx1262_secure_pack(&sec_ctx, buffer, sizeof(payload), &secure_len);
- *   // secure_len == 7 (3 payload + 4 header)
+ *   // secure_len == 11 (3 payload + 4 counter + 4 MAC)
  *   // buffer now ready for sx1262_transmit()
  * @endcode
  */
@@ -497,28 +530,35 @@ sx1262_security_result_t sx1262_secure_pack(
 );
 
 /**
- * @brief Unpack (decrypt) a received secured payload
+ * @brief Unpack (verify + decrypt) a received secured payload
  * 
- * Verifies counter for replay protection and decrypts payload in-place.
+ * Verifies counter for replay protection, authenticates the MAC tag,
+ * and decrypts payload in-place. Authentication and decryption are
+ * atomic — if the MAC fails, no plaintext is returned.
  * 
- * Before: buffer = [Counter (4B)][Encrypted Payload (N bytes)]
- * After:  buffer = [Decrypted Payload (N bytes)][garbage (4B)]
+ * Before: buffer = [Counter (4B)][Encrypted Payload (N bytes)][MAC Tag (4B)]
+ * After:  buffer = [Decrypted Payload (N bytes)][garbage]
  * 
  * @param ctx             Pointer to initialized security context
  * @param buffer          Buffer containing received secured packet
  *                        On success, contains decrypted payload at start
- * @param total_len       Total received packet length (including 4-byte counter)
- * @param out_payload_len Pointer to receive original payload length (total_len - 4)
+ * @param total_len       Total received packet length (counter + payload + tag)
+ * @param out_payload_len Pointer to receive original payload length
+ *                        (total_len - SX1262_SEC_OVERHEAD)
  * 
- * @return SX1262_SEC_OK on success
+ * @return SX1262_SEC_OK on success (authenticated and decrypted)
  * @return SX1262_SEC_ERROR_NOT_INITIALIZED if context not initialized
  * @return SX1262_SEC_ERROR_INVALID_PARAM if buffer or out_payload_len is NULL
- * @return SX1262_SEC_ERROR_MALFORMED if total_len < 5 (minimum: 4B counter + 1B payload)
+ * @return SX1262_SEC_ERROR_MALFORMED if total_len < minimum (counter + 1 + tag)
  * @return SX1262_SEC_ERROR_REPLAY if counter indicates replay attack
- * @return SX1262_SEC_ERROR_CRYPTO if decryption failed
+ * @return SX1262_SEC_ERROR_AUTH_FAILED if MAC tag verification failed (tampered!)
+ * @return SX1262_SEC_ERROR_CRYPTO if decryption failed for other reasons
  * 
  * @note The RX counter is updated on successful decryption
- * @note If security is disabled, just shifts buffer (no decryption)
+ * @note If security is disabled, just returns buffer as-is (no decryption)
+ * 
+ * @warning If SX1262_SEC_ERROR_AUTH_FAILED is returned, the buffer has been
+ *          zeroed. The data must NOT be used — it has been tampered with.
  * 
  * Example:
  * @code
@@ -527,8 +567,12 @@ sx1262_security_result_t sx1262_secure_pack(
  *   
  *   if (sx1262_receive(rx_buffer, sizeof(rx_buffer), 5000, &rx_result) == SX1262_OK) {
  *       uint8_t payload_len;
- *       if (sx1262_secure_unpack(&sec_ctx, rx_buffer, rx_result.payload_length, &payload_len) == SX1262_SEC_OK) {
- *           // Process decrypted payload in rx_buffer[0..payload_len-1]
+ *       sx1262_security_result_t sec_res = sx1262_secure_unpack(&sec_ctx,
+ *                                              rx_buffer, rx_result.payload_length, &payload_len);
+ *       if (sec_res == SX1262_SEC_OK) {
+ *           // Process authenticated, decrypted payload in rx_buffer[0..payload_len-1]
+ *       } else if (sec_res == SX1262_SEC_ERROR_AUTH_FAILED) {
+ *           // Packet tampered — discard
  *       }
  *   }
  * @endcode
@@ -610,6 +654,7 @@ typedef struct {
     uint32_t packets_encrypted;     ///< Total successful encryptions
     uint32_t packets_decrypted;     ///< Total successful decryptions
     uint32_t replay_rejections;     ///< Packets rejected as replays
+    uint32_t auth_failures;         ///< Packets rejected due to MAC verification failure
     uint32_t tx_counter;            ///< Current TX counter
     uint32_t rx_counter_last;       ///< Last valid RX counter
     uint32_t storage_saves;         ///< Successful storage saves

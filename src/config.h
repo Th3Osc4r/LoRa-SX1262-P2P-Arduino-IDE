@@ -1,4 +1,4 @@
-/**
+ /**
  * ============================================================================
  * config.h - SX1262 Driver Configuration with Board Presets
  * ============================================================================
@@ -20,7 +20,7 @@
 // BOARD SELECTION - Uncomment exactly ONE option
 // ============================================================================
 
-#define BOARD_HELTEC_WIFI_LORA_32_V3      // Heltec WiFi LoRa 32 V3 (integrated SX1262)
+#define BOARD_HELTEC_WIFI_LORA_32_V3     // Heltec WiFi LoRa 32 V3 (integrated SX1262)
 //#define BOARD_ESP32S3_WAVESHARE           // ESP32-S3 + Waveshare SX1262 HF module  
 //#define BOARD_ESP32_WROOM_WAVESHARE       // ESP32-WROOM + Waveshare SX1262 HF module
 //#define BOARD_CUSTOM                        // Custom board - define pins manually below
@@ -128,15 +128,15 @@
 #define BOARD_HAS_BUILTIN_SX1262    0
 
 // SPI Pins - REQUIRED: Set these to match your wiring
-#define PIN_SX1262_MOSI             11      // ← Change to your MOSI pin
-#define PIN_SX1262_MISO             13      // ← Change to your MISO pin
-#define PIN_SX1262_SCK              12      // ← Change to your SCK pin
-#define PIN_SX1262_CS               10      // ← Change to your CS pin
+#define PIN_SX1262_MOSI             11      // â† Change to your MOSI pin
+#define PIN_SX1262_MISO             13      // â† Change to your MISO pin
+#define PIN_SX1262_SCK              12      // â† Change to your SCK pin
+#define PIN_SX1262_CS               10      // â† Change to your CS pin
 
 // Control Pins - REQUIRED: Set these to match your wiring
-#define PIN_SX1262_NRESET           16      // ← Change to your RESET pin
-#define PIN_SX1262_BUSY             5       // ← Change to your BUSY pin
-#define PIN_SX1262_DIO1             2       // ← Change to your DIO1 pin
+#define PIN_SX1262_NRESET           16      // â† Change to your RESET pin
+#define PIN_SX1262_BUSY             5       // â† Change to your BUSY pin
+#define PIN_SX1262_DIO1             2       // â† Change to your DIO1 pin
 
 // SPI Host - Set according to your MCU
 // ESP32-S3: SPI2_HOST or SPI3_HOST
@@ -184,6 +184,26 @@
 #endif
 
 // ============================================================================
+// SECURITY CONFIGURATION
+// ============================================================================
+
+/**
+ * MAC tag size for AES-128-CCM authenticated encryption (bytes).
+ * 
+ * Supported values: 4, 6, 8, 10, 12, 14, 16
+ * 
+ * Recommended:
+ *   4 = Best for LoRa (minimal airtime overhead, ~1 in 4 billion forgery)
+ *   8 = Higher security at cost of additional airtime at high SF
+ * 
+ * Trade-off: Each additional byte reduces max payload by 1 and may add
+ * airtime depending on LoRa symbol block alignment.
+ */
+#ifndef SX1262_SEC_MAC_SIZE
+#define SX1262_SEC_MAC_SIZE             4
+#endif
+
+// ============================================================================
 // SPI CONFIGURATION
 // ============================================================================
 #ifndef SPI_FREQUENCY_HZ
@@ -195,20 +215,20 @@
 // TIMING CONSTANTS
 // ============================================================================
 // Reset timing
-#define TIMING_RESET_LOW_US         100         // NRESET pulse width (µs)
+#define TIMING_RESET_LOW_US         100         // NRESET pulse width (Âµs)
 #define TIMING_RESET_WAIT_MS        5           // Wait after reset release (ms)
 
 // BUSY pin timeout
 #define TIMING_BUSY_POLL_TIMEOUT_MS 1000        // General BUSY timeout (ms)
 
-// Mode transition timings (from datasheet, typical values in µs)
-#define TIMING_STBY_RC_STBY_XOSC_US 31          // STBY_RC → STBY_XOSC
-#define TIMING_STBY_RC_FS_US        50          // STBY_RC → FS
-#define TIMING_STBY_RC_TX_US        126         // STBY_RC → TX
-#define TIMING_STBY_RC_RX_US        83          // STBY_RC → RX
-#define TIMING_STBY_XOSC_FS_US      40          // STBY_XOSC → FS
-#define TIMING_STBY_XOSC_RX_US      62          // STBY_XOSC → RX
-#define TIMING_STBY_XOSC_TX_US      105         // STBY_XOSC → TX
+// Mode transition timings (from datasheet, typical values in Âµs)
+#define TIMING_STBY_RC_STBY_XOSC_US 31          // STBY_RC â†’ STBY_XOSC
+#define TIMING_STBY_RC_FS_US        50          // STBY_RC â†’ FS
+#define TIMING_STBY_RC_TX_US        126         // STBY_RC â†’ TX
+#define TIMING_STBY_RC_RX_US        83          // STBY_RC â†’ RX
+#define TIMING_STBY_XOSC_FS_US      40          // STBY_XOSC â†’ FS
+#define TIMING_STBY_XOSC_RX_US      62          // STBY_XOSC â†’ RX
+#define TIMING_STBY_XOSC_TX_US      105         // STBY_XOSC â†’ TX
 #define TIMING_SLEEP_COLD_WAKE_MS   3500        // Cold sleep wake time (ms)
 
 // Safety margin for mode transitions

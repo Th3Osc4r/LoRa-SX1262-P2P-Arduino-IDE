@@ -2,32 +2,32 @@
  * @file sx1262_security.cpp
  * @brief Platform-agnostic security module implementation for SX1262 driver suite
  * 
- * This file implements the security layer for LoRa payload encryption.
- * It is completely platform-agnostic - all hardware-specific crypto
- * operations are delegated to the crypto HAL.
+ * This file implements the security layer for LoRa payload authenticated
+ * encryption. It is completely platform-agnostic — all hardware-specific
+ * crypto operations are delegated to the crypto HAL.
  * 
- * Implementation Details:
+ * Implementation Details (AES-128-CCM):
  * 
  * Encryption (pack):
  *   1. Validate inputs and check counter won't overflow
- *   2. Shift payload right by 4 bytes to make room for counter
+ *   2. Shift payload right by SX1262_SEC_HEADER_SIZE bytes for counter
  *   3. Write TX counter to first 4 bytes (little-endian)
- *   4. Build IV: [counter (4B)][nonce (12B)]
- *   5. Encrypt payload portion using AES-128-CTR
+ *   4. CCM-encrypt payload with counter as AAD, nonce from context
+ *   5. Append MAC tag after encrypted payload
  *   6. Increment TX counter
  * 
  * Decryption (unpack):
- *   1. Validate inputs (minimum packet size)
+ *   1. Validate inputs (minimum packet size: counter + 1 + tag)
  *   2. Extract counter from first 4 bytes
  *   3. Check counter against replay window
- *   4. Build IV from counter + nonce
- *   5. Decrypt payload portion
+ *   4. CCM-decrypt payload with atomic tag verification
+ *   5. If tag fails: zero buffer, return AUTH_FAILED
  *   6. Shift decrypted payload to buffer start
  *   7. Update RX counter tracking
  * 
  * @author Oscar / Claude
- * @date December 2024
- * @version 1.0.0
+ * @date December 2024 (CCM upgrade: February 2025)
+ * @version 2.0.0
  */
 
 #include "sx1262_security.h"
@@ -39,26 +39,6 @@
 // ============================================================================
 // INTERNAL HELPERS
 // ============================================================================
-
-/**
- * @brief Build the 16-byte IV from counter and nonce
- * 
- * IV Structure: [Counter (4B little-endian)][Nonce (12B)]
- * 
- * @param counter  32-bit counter value
- * @param nonce    12-byte static nonce
- * @param iv_out   16-byte output buffer for IV
- */
-static void build_iv(uint32_t counter, const uint8_t* nonce, uint8_t* iv_out) {
-    // Counter in little-endian (LSB first)
-    iv_out[0] = (uint8_t)(counter & 0xFF);
-    iv_out[1] = (uint8_t)((counter >> 8) & 0xFF);
-    iv_out[2] = (uint8_t)((counter >> 16) & 0xFF);
-    iv_out[3] = (uint8_t)((counter >> 24) & 0xFF);
-    
-    // Static nonce
-    memcpy(iv_out + 4, nonce, SX1262_SEC_NONCE_SIZE);
-}
 
 /**
  * @brief Extract counter from buffer (little-endian)
@@ -349,35 +329,40 @@ sx1262_security_result_t sx1262_secure_pack(
         return SX1262_SEC_ERROR_COUNTER_OVERFLOW;
     }
     
-    // Step 1: Shift payload right by 4 bytes to make room for counter
+    // Step 1: Shift payload right by HEADER_SIZE bytes to make room for counter
     // Work backwards to avoid overwriting
     for (int i = payload_len - 1; i >= 0; i--) {
         buffer[i + SX1262_SEC_HEADER_SIZE] = buffer[i];
     }
     
-    // Step 2: Write counter to first 4 bytes
+    // Step 2: Write counter to first 4 bytes (plaintext, used as AAD)
     write_counter(buffer, ctx->tx_counter);
     
-    // Step 3: Build IV
-    uint8_t iv[SX1262_SEC_IV_SIZE];
-    build_iv(ctx->tx_counter, ctx->nonce, iv);
+    // Step 3: CCM-encrypt payload with counter as AAD
+    // Tag is written to a local buffer first, then appended
+    uint8_t tag[SX1262_SEC_MAC_SIZE];
     
-    // Step 4: Encrypt payload portion (bytes 4 to end)
-    crypto_hal_result_t crypto_res = crypto_hal_aes128_ctr_encrypt(
+    crypto_hal_result_t crypto_res = crypto_hal_aes128_ccm_encrypt(
         ctx->key,
-        iv,
-        buffer + SX1262_SEC_HEADER_SIZE,  // Plaintext starts after counter
-        buffer + SX1262_SEC_HEADER_SIZE,  // Encrypt in-place
-        payload_len
+        ctx->nonce,                              // 12-byte nonce used directly
+        buffer, SX1262_SEC_HEADER_SIZE,          // AAD = counter bytes
+        buffer + SX1262_SEC_HEADER_SIZE,         // Plaintext starts after counter
+        buffer + SX1262_SEC_HEADER_SIZE,         // Encrypt in-place
+        payload_len,
+        tag, SX1262_SEC_MAC_SIZE                 // Output MAC tag
     );
     
-    // Clear IV from stack
-    crypto_hal_secure_zero(iv, sizeof(iv));
-    
     if (crypto_res != CRYPTO_HAL_OK) {
-        SX1262_LOG_ERROR("[SECURITY] Encryption failed: %d\n", crypto_res);
+        SX1262_LOG_ERROR("[SECURITY] CCM encryption failed: %d\n", crypto_res);
+        crypto_hal_secure_zero(tag, sizeof(tag));
         return SX1262_SEC_ERROR_CRYPTO;
     }
+    
+    // Step 4: Append MAC tag after encrypted payload
+    memcpy(buffer + SX1262_SEC_HEADER_SIZE + payload_len, tag, SX1262_SEC_MAC_SIZE);
+    
+    // Clear tag from stack
+    crypto_hal_secure_zero(tag, sizeof(tag));
     
     // Step 5: Update counter and stats
     ctx->tx_counter++;
@@ -405,8 +390,8 @@ sx1262_security_result_t sx1262_secure_pack(
         }
     }
     
-    // Set output length
-    *out_total_len = payload_len + SX1262_SEC_HEADER_SIZE;
+    // Set output length: payload + counter + MAC tag
+    *out_total_len = payload_len + SX1262_SEC_OVERHEAD;
     
     SX1262_LOG_DEBUG("[SECURITY] Packed %d bytes -> %d bytes (counter=%lu)\n",
                     payload_len, *out_total_len, 
@@ -443,18 +428,20 @@ sx1262_security_result_t sx1262_secure_unpack(
         return SX1262_SEC_OK;
     }
     
-    // Validate minimum packet size: 4 bytes counter + 1 byte payload minimum
-    if (total_len < (SX1262_SEC_HEADER_SIZE + 1)) {
-        SX1262_LOG_ERROR("[SECURITY] Unpack failed: packet too short (%d bytes)\n", total_len);
+    // Validate minimum packet size: 4 bytes counter + 1 byte payload + MAC_SIZE tag
+    if (total_len < (SX1262_SEC_HEADER_SIZE + 1 + SX1262_SEC_MAC_SIZE)) {
+        SX1262_LOG_ERROR("[SECURITY] Unpack failed: packet too short (%d bytes, min %d)\n", 
+                        total_len, SX1262_SEC_HEADER_SIZE + 1 + SX1262_SEC_MAC_SIZE);
         return SX1262_SEC_ERROR_MALFORMED;
     }
     
-    uint8_t payload_len = total_len - SX1262_SEC_HEADER_SIZE;
+    // Calculate payload length (total minus counter minus MAC tag)
+    uint8_t payload_len = total_len - SX1262_SEC_OVERHEAD;
     
     // Step 1: Extract counter from first 4 bytes
     uint32_t rx_counter = extract_counter(buffer);
     
-    // Step 2: Check for replay attack
+    // Step 2: Check for replay attack (before expensive crypto)
     if (!is_valid_counter(rx_counter, ctx->rx_counter_last, ctx->replay_window)) {
         SX1262_LOG_WARN("[SECURITY] Replay detected! rx=%lu, last=%lu, window=%lu\n",
                        (unsigned long)rx_counter,
@@ -464,24 +451,35 @@ sx1262_security_result_t sx1262_secure_unpack(
         return SX1262_SEC_ERROR_REPLAY;
     }
     
-    // Step 3: Build IV from received counter
-    uint8_t iv[SX1262_SEC_IV_SIZE];
-    build_iv(rx_counter, ctx->nonce, iv);
+    // Step 3: Get pointer to MAC tag (located after encrypted payload)
+    const uint8_t* rx_tag = buffer + SX1262_SEC_HEADER_SIZE + payload_len;
     
-    // Step 4: Decrypt payload portion (bytes 4 to end) in-place
-    crypto_hal_result_t crypto_res = crypto_hal_aes128_ctr_decrypt(
+    // Step 4: CCM-decrypt with atomic tag verification
+    // Counter bytes (AAD) are authenticated but not encrypted
+    crypto_hal_result_t crypto_res = crypto_hal_aes128_ccm_decrypt(
         ctx->key,
-        iv,
-        buffer + SX1262_SEC_HEADER_SIZE,  // Ciphertext starts after counter
-        buffer + SX1262_SEC_HEADER_SIZE,  // Decrypt in-place
-        payload_len
+        ctx->nonce,                              // 12-byte nonce
+        buffer, SX1262_SEC_HEADER_SIZE,          // AAD = counter bytes
+        buffer + SX1262_SEC_HEADER_SIZE,         // Ciphertext starts after counter
+        buffer + SX1262_SEC_HEADER_SIZE,         // Decrypt in-place
+        payload_len,
+        rx_tag, SX1262_SEC_MAC_SIZE              // Tag to verify
     );
     
-    // Clear IV from stack
-    crypto_hal_secure_zero(iv, sizeof(iv));
+    if (crypto_res == CRYPTO_HAL_ERROR_AUTH_FAILED) {
+        // MAC verification failed — data tampered!
+        // Zero entire buffer to prevent any plaintext leakage
+        crypto_hal_secure_zero(buffer, total_len);
+        ctx->auth_failures++;
+        SX1262_LOG_WARN("[SECURITY] AUTH FAILED: packet tampered (counter=%lu)\n",
+                       (unsigned long)rx_counter);
+        return SX1262_SEC_ERROR_AUTH_FAILED;
+    }
     
     if (crypto_res != CRYPTO_HAL_OK) {
-        SX1262_LOG_ERROR("[SECURITY] Decryption failed: %d\n", crypto_res);
+        // Other crypto error — also zero buffer for safety
+        crypto_hal_secure_zero(buffer, total_len);
+        SX1262_LOG_ERROR("[SECURITY] CCM decryption failed: %d\n", crypto_res);
         return SX1262_SEC_ERROR_CRYPTO;
     }
     
@@ -576,6 +574,7 @@ sx1262_security_result_t sx1262_security_get_stats(
     stats->packets_encrypted = ctx->packets_encrypted;
     stats->packets_decrypted = ctx->packets_decrypted;
     stats->replay_rejections = ctx->replay_rejections;
+    stats->auth_failures = ctx->auth_failures;
     stats->tx_counter = ctx->tx_counter;
     stats->rx_counter_last = ctx->rx_counter_last;
     stats->storage_saves = ctx->storage_saves;
@@ -594,6 +593,7 @@ void sx1262_security_reset_stats(sx1262_security_context_t* ctx) {
     ctx->packets_encrypted = 0;
     ctx->packets_decrypted = 0;
     ctx->replay_rejections = 0;
+    ctx->auth_failures = 0;
     
     SX1262_LOG_INFO("[SECURITY] Statistics reset\n");
 }
@@ -609,6 +609,7 @@ const char* sx1262_security_error_to_string(sx1262_security_result_t result) {
         case SX1262_SEC_ERROR_REPLAY:            return "REPLAY_DETECTED";
         case SX1262_SEC_ERROR_COUNTER_OVERFLOW:  return "COUNTER_OVERFLOW";
         case SX1262_SEC_ERROR_MALFORMED:         return "MALFORMED_PACKET";
+        case SX1262_SEC_ERROR_AUTH_FAILED:       return "AUTH_FAILED (tampered)";
         default:                                  return "UNKNOWN_ERROR";
     }
 }
